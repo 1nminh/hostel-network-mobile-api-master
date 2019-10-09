@@ -7,6 +7,7 @@ buildscript {
     }
     dependencies {
         classpath("org.springframework.boot:spring-boot-gradle-plugin:${springBootVersion}")
+        classpath 'com.google.cloud.tools:appengine-gradle-plugin:2.1.0'
     }
 }
 
@@ -15,6 +16,7 @@ apply plugin: 'eclipse'
 apply plugin: 'war'
 apply plugin: 'org.springframework.boot'
 apply plugin: 'io.spring.dependency-management'
+apply plugin: 'com.google.cloud.tools.appengine'
 
 
 group 'com.example'
