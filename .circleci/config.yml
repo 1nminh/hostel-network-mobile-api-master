@@ -1,0 +1,115 @@
+version: 2
+jobs:
+  build_production:
+    working_directory: /app
+    docker:
+      - image: openjdk:8-stretch
+    steps:
+      - checkout
+      - run:
+          name: Replace application properties with the one for Docker
+          command: |
+            rm src/main/resources/application.properties
+            mv src/main/resources/application_docker.properties src/main/resources/application.properties
+      - run:
+          name: Build gradle
+          command: |
+            chmod +x gradlew
+            ./gradlew clean build
+      - persist_to_workspace:
+          root: .
+          paths:
+            - ./*
+  dockerize_production:
+    working_directory: /app
+    docker:
+      - image: docker:latest
+    steps:
+      - setup_remote_docker
+      - attach_workspace:
+          at: /app
+      - run:
+          name: Build container
+          command: |
+            docker build -f Dockerfile -t hostel-network-mobile-api:latest .
+      - run:
+          name: Save image layer cache
+          command: |
+            docker save -o hostel_network_mobile_api.tar hostel-network-mobile-api:latest
+      - run:
+          name: Save image to shared workspace and as artifact
+          command: |
+            mkdir workspace
+            mkdir artifacts
+            cp hostel_network_mobile_api.tar workspace/
+            cp hostel_network_mobile_api.tar artifacts/
+      - persist_to_workspace:
+          root: workspace
+          paths:
+            - hostel_network_mobile_api.tar
+      - store_artifacts:
+          path: /app/artifacts
+  deploy_production:
+    working_directory: /app
+    docker:
+      - image: debian:latest
+    steps:
+      - add_ssh_keys
+      - run:
+          name: Install OpenSSH, OpenSSL
+          command: |
+            apt-get update
+            apt-get install -y openssh-client openssl ca-certificates
+      - attach_workspace:
+          at: /app/workspace
+      - run:
+          name: Getting SSH fingerprint from server
+          command: |
+            ssh-keyscan -H $SERVER_IP >> ~/.ssh/known_hosts
+      - run:
+          working_directory: workspace
+          name: Push image to server
+          command: |
+            ssh $SSH_USER@$SERVER_IP 'mkdir -p ~/docker-images'
+            scp hostel_network_mobile_api.tar $SSH_USER@$SERVER_IP:~/docker-images
+      - run:
+          name: Delete old image(s) in server
+          command: |
+            ssh $SSH_USER@$SERVER_IP 'docker rmi hostel-network-mobile-api || true'
+      - run:
+          name: Import new image in server
+          command: |
+            ssh $SSH_USER@$SERVER_IP 'docker load --input ~/docker-images/hostel_network_mobile_api.tar'
+      - run:
+          name: Stop and remove old container
+          command: |
+            ssh $SSH_USER@$SERVER_IP 'docker stop hostel-network-mobile-api || true'
+            ssh $SSH_USER@$SERVER_IP 'docker rm hostel-network-mobile-api || true'
+      - run:
+          name: Create and start container
+          command: |
+            ssh $SSH_USER@$SERVER_IP 'docker run -p 2006:8080 --name hostel-network-mobile-api -d hostel-network-mobile-api:latest'
+      - run:
+          name: Delete container tar image
+          command: |
+            ssh $SSH_USER@$SERVER_IP 'rm -rf ~/docker-images/hostel_network_mobile_api.tar'
+workflows:
+  version: 2
+  build_and_deploy:
+    jobs:
+      - build_production:
+          filters:
+            branches:
+              only: master
+      - dockerize_production:
+          requires:
+            - build_production
+          filters:
+            branches:
+              only: master
+      - deploy_production:
+          requires:
+            - dockerize_production
+          filters:
+            branches:
+              only: master
